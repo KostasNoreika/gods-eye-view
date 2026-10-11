@@ -194,6 +194,43 @@ export const TARKTEE_ANCHORS = [
   { lat: 58.3859, lon: 24.4971 }, // Pärnu
   { lat: 59.3797, lon: 28.1791 }, // Narva
 ];
+/** Via Lietuva road cameras (eismoinfo.lt, layer VKR). Keyless. The JPEG URL
+ * changes with every capture, so the catalog stores the camera list only and
+ * media.js resolves feature-info at view time. */
+export const EISMOINFO_ORIGIN = 'https://eismoinfo.lt/';
+export const EISMOINFO_VKR_URL =
+  'https://eismoinfo.lt/eismoinfo-backend-v2/layer-static-features/VKR';
+export const EISMOINFO_FEATURE_INFO_URL = (id) =>
+  `https://eismoinfo.lt/eismoinfo-backend-v2/feature-info/VKR/${encodeURIComponent(id)}`;
+/** eismoinfo.lt serves the list, feature-info, and frames only to a browser. */
+export const EISMOINFO_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+/** Above the 322 cameras the VKR list carried on 2026-10-11. The pack's own
+ * cap stays inside the room left under DEFAULT_CCTV_MAX_SOURCES. */
+export const DEFAULT_LITHUANIA_MAX_SOURCES = 400;
+/** The camera list changes rarely; one hour is the shortest allowed cache. */
+export const LITHUANIA_LIST_CACHE_MS = 60 * 60 * 1000;
+/** One feature-info lookup per camera per minute. The JPEG fetch is separate. */
+export const LITHUANIA_RESOLVE_CACHE_MS = 60 * 1000;
+/** Hard ceiling on the VKR list body. The whole country is well under this. */
+export const LITHUANIA_LIST_MAX_BYTES = 1024 * 1024;
+/** Feature-info is one camera's current photo URL plus a short weather block. */
+export const LITHUANIA_FEATURE_INFO_MAX_BYTES = 256 * 1024;
+export const LITHUANIA_BBOX = Object.freeze({
+  south: 53.8,
+  north: 56.5,
+  west: 20.9,
+  east: 26.9,
+});
+/** Prioritization anchors: the largest cities, so a lowered cap keeps coverage
+ * rather than only the capital. */
+export const LITHUANIA_ANCHORS = Object.freeze([
+  { lat: 54.6872, lon: 25.2797 }, // Vilnius
+  { lat: 54.8985, lon: 23.9036 }, // Kaunas
+  { lat: 55.7033, lon: 21.1443 }, // Klaipėda
+  { lat: 55.9349, lon: 23.3137 }, // Šiauliai
+  { lat: 55.7348, lon: 24.3575 }, // Panevėžys
+]);
 /** Warendorf (Germany): the Marktplatz municipal webcam from a curated catalog file. */
 export const DEFAULT_WARENDORF_SOURCE_FILE =
   'config/cctv_sources.warendorf.json';

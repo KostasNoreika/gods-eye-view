@@ -8,6 +8,11 @@ import {
   CCTV_MEDIA_MAX_BODY_BYTES,
   NSW_IMAGE_ORIGIN,
   NSW_IMAGE_USER_AGENT,
+  EISMOINFO_ORIGIN,
+  EISMOINFO_FEATURE_INFO_URL,
+  EISMOINFO_USER_AGENT,
+  LITHUANIA_RESOLVE_CACHE_MS,
+  LITHUANIA_FEATURE_INFO_MAX_BYTES,
 } from './constants.js';
 /**
  * Generate a synthetic SVG billboard image for a CCTV camera placeholder.
@@ -485,6 +490,7 @@ export async function fetchWithinHost(url, init, fetchImpl = fetch) {
  */
 const CCTV_IMAGE_USER_AGENT_BY_HOST = Object.freeze({
   [new URL(NSW_IMAGE_ORIGIN).hostname]: NSW_IMAGE_USER_AGENT,
+  [new URL(EISMOINFO_ORIGIN).hostname]: EISMOINFO_USER_AGENT,
 });
 
 /**
@@ -557,4 +563,161 @@ export async function fetchCctvImageFromUpstream(
     clearTimeout(timeoutId);
     controller.abort();
   }
+}
+
+/** Status painted on the placeholder when a Via Lietuva camera has no JPEG. */
+export const EISMOINFO_UNAVAILABLE_STATUS = 'NO CURRENT IMAGE';
+
+const eismoinfoResolveCache = new Map();
+const eismoinfoResolveInflight = new Map();
+
+/**
+ * Feature id encoded in a Lithuania camera id, or '' when it is not one.
+ *
+ * @param {string} cameraId
+ * @returns {string}
+ */
+export function eismoinfoFeatureId(cameraId) {
+  const match = /^lt-vkr-([A-Za-z0-9_-]{1,40})$/.exec(String(cameraId || ''));
+  return match ? match[1] : '';
+}
+
+/**
+ * The current JPEG URL from one feature-info payload, or ''.
+ * Only https://eismoinfo.lt/eismoinfo-backend-v2/image-provider/ is accepted.
+ *
+ * @param {unknown} payload
+ * @returns {string}
+ */
+export function eismoinfoPhotoUrl(payload) {
+  const photos = payload?.info?.[0]?.photos;
+  const raw = Array.isArray(photos) ? photos[0] : '';
+  if (typeof raw !== 'string' || !raw) return '';
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return '';
+  }
+  if (url.protocol !== 'https:') return '';
+  if (url.hostname !== 'eismoinfo.lt') return '';
+  if (!url.pathname.startsWith('/eismoinfo-backend-v2/image-provider/')) {
+    return '';
+  }
+  if (url.username || url.password) return '';
+  return url.href;
+}
+
+async function fetchEismoinfoPhotoUrl(featureId, fetchImpl) {
+  const endpoint = EISMOINFO_FEATURE_INFO_URL(featureId);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    CCTV_FRAME_FETCH_TIMEOUT_MS,
+  );
+  try {
+    const upstream = await fetchWithinHost(
+      endpoint,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': EISMOINFO_USER_AGENT,
+        },
+        signal: controller.signal,
+      },
+      fetchImpl,
+    );
+    if (!upstream?.ok) return '';
+    const body = await readCappedResponseBytes(
+      upstream,
+      LITHUANIA_FEATURE_INFO_MAX_BYTES,
+    );
+    if (!body) return '';
+    let payload;
+    try {
+      payload = JSON.parse(body.toString('utf8'));
+    } catch {
+      return '';
+    }
+    return eismoinfoPhotoUrl(payload);
+  } catch {
+    // @codex-fail-open-ok: a feature-info miss is "no current image", not a thrown frame error
+    return '';
+  } finally {
+    clearTimeout(timeoutId);
+    controller.abort();
+  }
+}
+
+/**
+ * Current JPEG URL for one Lithuania camera. At most one feature-info call
+ * per camera per minute, including a miss (empty photos, non-200, timeout).
+ *
+ * @param {string} cameraId
+ * @param {object} [options]
+ * @returns {Promise<string>}
+ */
+export async function resolveEismoinfoSnapshotUrl(cameraId, options = {}) {
+  const {
+    fetchImpl = fetch,
+    now = Date.now,
+    cache = eismoinfoResolveCache,
+    inflight = eismoinfoResolveInflight,
+    cacheMs = LITHUANIA_RESOLVE_CACHE_MS,
+  } = options;
+  const featureId = eismoinfoFeatureId(cameraId);
+  if (!featureId) return '';
+  const ts = typeof now === 'function' ? now() : Number(now);
+  const hit = cache.get(featureId);
+  if (hit && ts - hit.at < cacheMs && ts >= hit.at) return hit.url;
+  const pending = inflight.get(featureId);
+  if (pending) return pending;
+  let job;
+  job = (async () => {
+    try {
+      const url = await fetchEismoinfoPhotoUrl(featureId, fetchImpl);
+      cache.set(featureId, { at: ts, url });
+      return url;
+    } finally {
+      if (inflight.get(featureId) === job) inflight.delete(featureId);
+    }
+  })();
+  inflight.set(featureId, job);
+  return job;
+}
+
+/**
+ * Resolve and fetch one Via Lietuva frame. Null means there is no current
+ * image; the caller paints the placeholder instead of Street View.
+ *
+ * @param {string} cameraId
+ * @param {object} [options]
+ * @returns {Promise<{ok:true,body:Buffer,contentType:string}|null>}
+ */
+export async function fetchEismoinfoSnapshot(cameraId, options = {}) {
+  const url = await resolveEismoinfoSnapshotUrl(cameraId, options);
+  if (!url) return null;
+  return fetchCctvImageFromUpstream(url, options);
+}
+
+/**
+ * Placeholder shown when feature-info has no photo or the JPEG fetch fails.
+ * The image itself names the source, so a miss is not a blank tile.
+ *
+ * @param {object} opts
+ * @param {string} opts.cameraId
+ * @param {string} opts.label
+ * @param {string} [opts.city]
+ * @returns {string}
+ */
+export function eismoinfoUnavailableFrame({ cameraId, label, city }) {
+  const place = city
+    ? `${city} · Via Lietuva / eismoinfo.lt`
+    : 'Via Lietuva / eismoinfo.lt';
+  return buildSyntheticCctvSvg({
+    cameraId,
+    label,
+    city: place,
+    status: EISMOINFO_UNAVAILABLE_STATUS,
+  });
 }

@@ -8,6 +8,8 @@ import {
   buildSyntheticCctvSvg,
   proxyMediaResponse,
   fetchCctvImageFromUpstream,
+  fetchEismoinfoSnapshot,
+  eismoinfoUnavailableFrame,
   fetchTxdotSnapshot,
   fetchCctvMediaUpstream,
   watchDownstreamClose,
@@ -488,9 +490,11 @@ export function cctvProxy({ sourceRoot = process.cwd() } = {}) {
             : '');
 
         const upstreamImage =
-          source?.sourceKind === 'txdot-its'
-            ? await fetchTxdotSnapshot(upstreamCandidate)
-            : await fetchCctvImageFromUpstream(upstreamCandidate);
+          source?.sourceKind === 'eismoinfo-vkr'
+            ? await fetchEismoinfoSnapshot(source.id)
+            : source?.sourceKind === 'txdot-its'
+              ? await fetchTxdotSnapshot(upstreamCandidate)
+              : await fetchCctvImageFromUpstream(upstreamCandidate);
         if (upstreamImage?.ok) {
           setHealth(cameraId, {
             status: 'ok',
@@ -504,6 +508,25 @@ export function cctvProxy({ sourceRoot = process.cwd() } = {}) {
             'X-CCTV-Source': 'upstream-image',
           });
           res.end(upstreamImage.body);
+          return;
+        }
+
+        // A Via Lietuva miss is "no current image", not a Street View photo
+        // of the same place and not an error response.
+        if (source?.sourceKind === 'eismoinfo-vkr') {
+          const svg = eismoinfoUnavailableFrame({ cameraId, label, city });
+          setHealth(cameraId, {
+            status: 'degraded',
+            sourceKind: 'synthetic',
+            label: 'Via Lietuva / eismoinfo.lt',
+            message: 'No current image',
+          });
+          res.writeHead(200, {
+            'Content-Type': 'image/svg+xml',
+            'Cache-Control': 'no-store',
+            'X-CCTV-Source': 'synthetic',
+          });
+          res.end(svg);
           return;
         }
 

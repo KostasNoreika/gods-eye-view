@@ -43,6 +43,14 @@ import {
   TARKTEE_IMAGE_ORIGIN,
   DEFAULT_TARKTEE_MAX_SOURCES,
   TARKTEE_ANCHORS,
+  EISMOINFO_VKR_URL,
+  EISMOINFO_FEATURE_INFO_URL,
+  EISMOINFO_USER_AGENT,
+  DEFAULT_LITHUANIA_MAX_SOURCES,
+  LITHUANIA_LIST_CACHE_MS,
+  LITHUANIA_LIST_MAX_BYTES,
+  LITHUANIA_BBOX,
+  LITHUANIA_ANCHORS,
   DEFAULT_WARENDORF_SOURCE_FILE,
   WARENDORF_IMAGE_ORIGINS,
   NSW_CAMERAS_URL,
@@ -1861,5 +1869,160 @@ export async function loadVegvesenSourcesFromOpenData() {
       error?.message || error,
     );
     return [];
+  }
+}
+
+/** Success-only list cache. A failed fetch keeps the previous cameras and
+ * does not move `at`, so the next catalog refresh retries. */
+const lithuaniaListCache = { at: 0, cameras: null };
+
+/**
+ * Turn one eismoinfo VKR list into camera records.
+ * Points are [lat, lon], the opposite of GeoJSON. The JPEG is not stored:
+ * `url` is the stable feature-info locator and media.js resolves the photo
+ * when a frame is viewed.
+ *
+ * @param {unknown} payload
+ * @returns {Array<object>}
+ */
+export function parseEismoinfoVkrList(payload) {
+  const layers = Array.isArray(payload) ? payload : [];
+  const cameras = [];
+  const seen = new Set();
+  for (const layer of layers) {
+    if (!layer || typeof layer !== 'object') continue;
+    if (layer.layer && layer.layer !== 'VKR') continue;
+    const features = Array.isArray(layer.features) ? layer.features : [];
+    for (const feature of features) {
+      const camera = eismoinfoFeatureToSource(feature);
+      if (!camera || seen.has(camera.id)) continue;
+      seen.add(camera.id);
+      cameras.push(camera);
+    }
+  }
+  return cameras;
+}
+
+function eismoinfoFeatureToSource(feature) {
+  if (!feature || typeof feature !== 'object') return null;
+  const rawId = String(feature.id ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(rawId)) return null;
+  const point = feature.points?.[0]?.point;
+  if (!Array.isArray(point) || point.length < 2) return null;
+  const lat = toFiniteNumber(point[0]);
+  const lon = toFiniteNumber(point[1]);
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon) ||
+    lat < LITHUANIA_BBOX.south ||
+    lat > LITHUANIA_BBOX.north ||
+    lon < LITHUANIA_BBOX.west ||
+    lon > LITHUANIA_BBOX.east
+  ) {
+    return null;
+  }
+  const cameraId = `lt-vkr-${rawId}`;
+  const name = String(feature.name || cameraId)
+    .trim()
+    .slice(0, 160);
+  return {
+    id: cameraId,
+    name,
+    city: 'Lithuania',
+    cityId: 'lithuania',
+    provider: 'Via Lietuva / eismoinfo.lt',
+    lat,
+    lon,
+    headingDeg: fallbackHeadingFromId(cameraId),
+    headingConfidence: 'low',
+    pitchDeg: -18,
+    fovDeg: 44,
+    rangeM: 145,
+    mountHeightM: 8,
+    groundElevationM: 50,
+    feedType: 'image',
+    url: EISMOINFO_FEATURE_INFO_URL(rawId),
+    snapshotUrl: '',
+    sourceKind: 'eismoinfo-vkr',
+    license: 'Public Via Lietuva / eismoinfo.lt road camera data',
+  };
+}
+
+function lithuaniaMaxCount() {
+  const maxRaw = Number(
+    process.env.CCTV_LITHUANIA_MAX_SOURCES || DEFAULT_LITHUANIA_MAX_SOURCES,
+  );
+  return Number.isFinite(maxRaw)
+    ? Math.max(8, Math.min(500, Math.floor(maxRaw)))
+    : DEFAULT_LITHUANIA_MAX_SOURCES;
+}
+
+/**
+ * Fetch the Via Lietuva VKR camera list. The list is cached for at least an
+ * hour. Feature-info is never called here.
+ *
+ * @param {object} [options]
+ * @param {typeof fetch} [options.fetchImpl]
+ * @param {number|function} [options.now]
+ * @param {{at:number,cameras:Array|null}} [options.cache]
+ * @returns {Promise<Array<object>>}
+ */
+export async function loadLithuaniaSourcesFromEismoinfo(options = {}) {
+  const {
+    fetchImpl = fetch,
+    now = Date.now,
+    cache = lithuaniaListCache,
+  } = options;
+  const ts = typeof now === 'function' ? now() : Number(now);
+  if (
+    Array.isArray(cache.cameras) &&
+    cache.cameras.length &&
+    ts - cache.at < LITHUANIA_LIST_CACHE_MS &&
+    ts >= cache.at
+  ) {
+    return cache.cameras;
+  }
+  try {
+    const resp = await fetchImpl(EISMOINFO_VKR_URL, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': EISMOINFO_USER_AGENT,
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    const discard = async () => {
+      try {
+        await resp?.body?.cancel();
+      } catch {
+        /* @codex-fail-open-ok: cancelling an already-closed body is not a list failure */
+      }
+    };
+    if (!resp || resp.status >= 300 || !resp.ok) {
+      console.warn('[CCTV] eismoinfo VKR list failed:', resp?.status);
+      await discard();
+      return cache.cameras || [];
+    }
+    const payload = await readResponseJsonCapped(resp, LITHUANIA_LIST_MAX_BYTES);
+    const cameras = parseEismoinfoVkrList(payload);
+    if (!cameras.length) return cache.cameras || [];
+    const prioritized = prioritizeSources(
+      cameras,
+      lithuaniaMaxCount(),
+      LITHUANIA_ANCHORS,
+    );
+    cache.cameras = prioritized;
+    cache.at = ts;
+    console.log(
+      `[CCTV] Loaded eismoinfo camera sources: ${cameras.length} (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    // @codex-fail-open-ok: a list outage must not drop cameras already cached, and must not fail the catalog
+    console.warn(
+      '[CCTV] eismoinfo VKR list error:',
+      error?.message || error,
+    );
+    return cache.cameras || [];
   }
 }

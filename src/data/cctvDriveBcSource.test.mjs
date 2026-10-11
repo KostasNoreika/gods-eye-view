@@ -16,6 +16,7 @@ import {
   DEFAULT_TXDOT_MAX_SOURCES,
   DEFAULT_TALLINN_MAX_SOURCES,
   DEFAULT_TARKTEE_MAX_SOURCES,
+  DEFAULT_LITHUANIA_MAX_SOURCES,
   DEFAULT_NSW_MAX_SOURCES,
   DRIVEBC_WEBCAMS_URL,
 } from '../../server/providers/cctv/constants.js';
@@ -233,6 +234,7 @@ test('default per-pack camera caps fit inside the default catalog cap', () => {
     DEFAULT_TXDOT_MAX_SOURCES +
     DEFAULT_TALLINN_MAX_SOURCES +
     DEFAULT_TARKTEE_MAX_SOURCES +
+    DEFAULT_LITHUANIA_MAX_SOURCES +
     DEFAULT_NSW_MAX_SOURCES +
     1;
   assert.ok(

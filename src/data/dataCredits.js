@@ -341,6 +341,12 @@ export const DATA_CREDITS = [
       '<a href="https://tarktee.transpordiamet.ee/" target="_blank" rel="noopener">tarktee.transpordiamet.ee</a> (courtesy)',
   },
   {
+    key: 'eismoinfo-cctv',
+    html:
+      'CCTV cameras &amp; frames (Lithuania): Via Lietuva / eismoinfo.lt — ' +
+      '<a href="https://eismoinfo.lt/" target="_blank" rel="noopener">eismoinfo.lt</a> (courtesy)',
+  },
+  {
     key: 'warendorf-cctv',
     html: 'Webcam (Warendorf): <a href="https://www.warendorf.de/" target="_blank" rel="noopener">Stadt Warendorf</a> (courtesy)',
   },
